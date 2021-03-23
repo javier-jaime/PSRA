@@ -1,93 +1,196 @@
-import sys
-import pandas as pd
-import altair as alt
-import streamlit as st
-import numpy as np
-from sqlalchemy import create_engine
-engine = create_engine('sqlite://', echo=False)
-def clean(grouped,table):
-    DF = grouped.get_group(table)
-    DF.dropna(axis=1, how='all',inplace=True)
-    new_header = DF.iloc[0] #grab the first row for the header
-    DF = DF[1:] #take the data less the header row
-    DF.columns = new_header #set the header row as the df header
-    del DF['%F']
-    return DF
-@st.cache
-def load_data(uploaded_file):
-    df = pd.read_csv(uploaded_file,sep='\t',names=range(100), encoding= 'unicode_escape',dtype=str)
-    df.loc[df[0] == '%T', 'table'] = df[1]
-    df['table'].fillna(method='ffill', inplace=True)
-    data=df.loc[df[0].isin(['%R','%F'])]
-    return data
-st.sidebar.title("About")
-st.sidebar.info(
-        "This app is a simple example of "
-        "using Streamlit to create web app.\n"
-        "\nIt is maintained by [Mim]("
-        "https://datamonkeysite.com/about/).\n\n"
-        "https://github.com/djouallah/xer_reader_python"
-    )
-st.title('Read XER')
-uploaded_file = st.file_uploader("Choose an XER file", type="xer")
-if uploaded_file is not None:
-    dff=load_data(uploaded_file)
-    tablelist= dff['table'].unique()
-    tables =pd.DataFrame(tablelist)
-    tables.columns = ['tables']
-    grouped = dff.groupby(dff.table)
-    df_list= {}
-    #####################################
-    for x in tablelist:
-        df = clean(grouped,x)
-        df.to_sql(x, con=engine)
-    PROJECT =pd.read_sql("SELECT proj_id,proj_short_name FROM PROJECT",engine) 
-    values = PROJECT['proj_short_name'].tolist()
-    options = PROJECT['proj_id'].tolist()
-    dic = dict(zip(options, values))
-    proj_id_var= st.sidebar.selectbox('Select Project', options, format_func=lambda x: dic[x])
-    ###### Shwing sme stats about the file
-    result1 =pd.read_sql("SELECT 'Data Date' as Project, [last_recalc_date] as Date FROM PROJECT where proj_id="+proj_id_var,engine)
-    result2 =pd.read_sql("select 'Project Start' as Project ,min([project_start]) as Date \
-    from(SELECT min([act_start_date]) as Project_Start FROM TASK where proj_id="+proj_id_var+ \
-    " UNION ALL SELECT min([early_start_date]) as Project_Start FROM TASK where proj_id="+proj_id_var+")" ,engine)
-    result3 =pd.read_sql("select 'Project Finish' as Project ,max([project_Finish]) as Date \
-    from(SELECT max([act_end_date]) as Project_Finish FROM TASK where proj_id="+proj_id_var+ \
-    " UNION ALL SELECT max([late_end_date]) as Project_Finish FROM TASK where proj_id="+proj_id_var+")" ,engine)
-    pv=pd.concat([result1, result2,result3], axis=0)
-    pv.set_index('Project', inplace=True)
-    st.sidebar.table (pv)
-    ###### Shwing sme stats about the file
-    result =pd.read_sql("SELECT null as id,count(*) as Total_Task, \
-    sum(case when [task_type] = 'TT_Task' then 1 else 0 end ) as Task_Dependant, \
-    sum(case when [task_type] = 'TT_WBS' then 1 else 0 end ) as WBS_Summary, \
-    sum(case when [task_type] = 'TT_LOE' then 1 else 0 end ) as LOE, \
-    sum(case when [task_type] = 'TT_Mile' then 1 else 0 end ) as Start_Milestone, \
-    sum(case when [task_type] = 'TT_FinMile' then 1 else 0 end ) as Finish_Milestone, \
-    sum(case when [task_type] = 'TT_Rsrc' then 1 else 0 end ) as Resource_Dependant, \
-    sum(case when [status_code] = 'TK_Complete' then 1 else 0 end ) as Completed, \
-    sum(case when [status_code] = 'TK_Active' then 1 else 0 end ) as On_Going, \
-    sum(case when [status_code] = 'TK_NotStart' then 1 else 0 end ) as Not_Started, \
-    sum(case when [total_float_hr_cnt] = '0' then 1 else 0 end ) as Critical, \
-    sum(case when cast([total_float_hr_cnt] as real) < 0 then 1 else 0 end ) as Negative_Float, \
-    sum([target_work_qty])  as Budget_Labor, \
-    sum([act_work_qty])  as Actual_Labor, \
-    sum([remain_work_qty])  as Remaining_Labor, \
-    sum([remain_work_qty]) + sum([act_work_qty]) as at_Completion_Labor, \
-    sum([target_equip_qty])  as Budget_Non_Labor, \
-    sum([act_equip_qty])  as Actual_Non_Labor, \
-    sum([remain_equip_qty])  as Remaining_Non_Labor, \
-    sum([remain_equip_qty]) + sum([act_work_qty]) as at_Completion_Non_Labor \
-    FROM TASK where proj_id="+proj_id_var,engine) 
-    pv = result.melt(id_vars=["id"], 
-        var_name="Task", 
-        value_name="Value")
-    pv=pv[['Task','Value']]
-    pv.set_index('Task', inplace=True)
-    st.subheader("show some stats about the file")  
-    st.dataframe (pv)
-    ###### Shwing sme stats about the file
-    result =pd.read_sql("SELECT [task_code] as Activity_ID, [task_name] as Activity_Name FROM TASK where proj_id="+proj_id_var+" and cast([total_float_hr_cnt] as real) < 0 ",engine)
-    if not result.empty:
-        st.subheader("Task with negative float")  
-        st.dataframe (result)
+###############################################################################
+#
+# App - A class for writing the Excel XLSX App file.
+#
+# Copyright 2013-2020, John McNamara, jmcnamara@cpan.org
+#
+
+# Package imports.
+from . import xmlwriter
+
+
+class App(xmlwriter.XMLwriter):
+    """
+    A class for writing the Excel XLSX App file.
+
+
+    """
+
+    ###########################################################################
+    #
+    # Public API.
+    #
+    ###########################################################################
+
+    def __init__(self):
+        """
+        Constructor.
+
+        """
+
+        super(App, self).__init__()
+
+        self.part_names = []
+        self.heading_pairs = []
+        self.properties = {}
+
+    def _add_part_name(self, part_name):
+        # Add the name of a workbook Part such as 'Sheet1' or 'Print_Titles'.
+        self.part_names.append(part_name)
+
+    def _add_heading_pair(self, heading_pair):
+        # Add the name of a workbook Heading Pair such as 'Worksheets',
+        # 'Charts' or 'Named Ranges'.
+
+        # Ignore empty pairs such as chartsheets.
+        if not heading_pair[1]:
+            return
+
+        self.heading_pairs.append(('lpstr', heading_pair[0]))
+        self.heading_pairs.append(('i4', heading_pair[1]))
+
+    def _set_properties(self, properties):
+        # Set the document properties.
+        self.properties = properties
+
+    ###########################################################################
+    #
+    # Private API.
+    #
+    ###########################################################################
+
+    def _assemble_xml_file(self):
+        # Assemble and write the XML file.
+
+        # Write the XML declaration.
+        self._xml_declaration()
+
+        self._write_properties()
+        self._write_application()
+        self._write_doc_security()
+        self._write_scale_crop()
+        self._write_heading_pairs()
+        self._write_titles_of_parts()
+        self._write_manager()
+        self._write_company()
+        self._write_links_up_to_date()
+        self._write_shared_doc()
+        self._write_hyperlink_base()
+        self._write_hyperlinks_changed()
+        self._write_app_version()
+
+        self._xml_end_tag('Properties')
+
+        # Close the file.
+        self._xml_close()
+
+    ###########################################################################
+    #
+    # XML methods.
+    #
+    ###########################################################################
+
+    def _write_properties(self):
+        # Write the <Properties> element.
+        schema = 'http://schemas.openxmlformats.org/officeDocument/2006/'
+        xmlns = schema + 'extended-properties'
+        xmlns_vt = schema + 'docPropsVTypes'
+
+        attributes = [
+            ('xmlns', xmlns),
+            ('xmlns:vt', xmlns_vt),
+        ]
+
+        self._xml_start_tag('Properties', attributes)
+
+    def _write_application(self):
+        # Write the <Application> element.
+        self._xml_data_element('Application', 'Microsoft Excel')
+
+    def _write_doc_security(self):
+        # Write the <DocSecurity> element.
+        self._xml_data_element('DocSecurity', '0')
+
+    def _write_scale_crop(self):
+        # Write the <ScaleCrop> element.
+        self._xml_data_element('ScaleCrop', 'false')
+
+    def _write_heading_pairs(self):
+        # Write the <HeadingPairs> element.
+        self._xml_start_tag('HeadingPairs')
+        self._write_vt_vector('variant', self.heading_pairs)
+        self._xml_end_tag('HeadingPairs')
+
+    def _write_titles_of_parts(self):
+        # Write the <TitlesOfParts> element.
+        parts_data = []
+
+        self._xml_start_tag('TitlesOfParts')
+
+        for part_name in self.part_names:
+            parts_data.append(('lpstr', part_name))
+
+        self._write_vt_vector('lpstr', parts_data)
+
+        self._xml_end_tag('TitlesOfParts')
+
+    def _write_vt_vector(self, base_type, vector_data):
+        # Write the <vt:vector> element.
+        attributes = [
+            ('size', len(vector_data)),
+            ('baseType', base_type),
+        ]
+
+        self._xml_start_tag('vt:vector', attributes)
+
+        for vt_data in vector_data:
+            if base_type == 'variant':
+                self._xml_start_tag('vt:variant')
+
+            self._write_vt_data(vt_data)
+
+            if base_type == 'variant':
+                self._xml_end_tag('vt:variant')
+
+        self._xml_end_tag('vt:vector')
+
+    def _write_vt_data(self, vt_data):
+        # Write the <vt:*> elements such as <vt:lpstr> and <vt:if>.
+        self._xml_data_element("vt:%s" % vt_data[0], vt_data[1])
+
+    def _write_company(self):
+        company = self.properties.get('company', '')
+
+        self._xml_data_element('Company', company)
+
+    def _write_manager(self):
+        # Write the <Manager> element.
+        if 'manager' not in self.properties:
+            return
+
+        self._xml_data_element('Manager', self.properties['manager'])
+
+    def _write_links_up_to_date(self):
+        # Write the <LinksUpToDate> element.
+        self._xml_data_element('LinksUpToDate', 'false')
+
+    def _write_shared_doc(self):
+        # Write the <SharedDoc> element.
+        self._xml_data_element('SharedDoc', 'false')
+
+    def _write_hyperlink_base(self):
+        # Write the <HyperlinkBase> element.
+        hyperlink_base = self.properties.get('hyperlink_base')
+
+        if hyperlink_base is None:
+            return
+
+        self._xml_data_element('HyperlinkBase', hyperlink_base)
+
+    def _write_hyperlinks_changed(self):
+        # Write the <HyperlinksChanged> element.
+        self._xml_data_element('HyperlinksChanged', 'false')
+
+    def _write_app_version(self):
+        # Write the <AppVersion> element.
+        self._xml_data_element('AppVersion', '12.0000')
